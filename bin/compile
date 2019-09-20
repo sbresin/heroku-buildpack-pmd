@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# bin/compile <build-dir> <cache-dir> <env-dir>
+
+START_TIME=$SECONDS
+
+# set -x
+set -o errexit    # always exit on error
+set -o pipefail   # don't ignore exit codes when piping output
+unset GIT_DIR     # Avoid GIT_DIR leak from previous build steps
+
+### Configure directories
+
+BUILD_DIR=${1:-}
+CACHE_DIR=${2:-}
+ENV_DIR=${3:-}
+BP_DIR=$(cd $(dirname ${0:-}); cd ..; pwd)
+
+source $BP_DIR/lib/common.sh
+source $BP_DIR/lib/stdlib.sh
+
+### Setup functions
+
+install_pmd() {
+  log "Downloading PMD zip ..."
+  mkdir pmd && curl -o pmd.zip --silent --location "https://github.com/pmd/pmd/releases/download/pmd_releases%2F6.18.0/pmd-bin-6.18.0.zip"
+  unzip -q -d pmd pmd.zip
+  mv pmd/*/* pmd/
+
+  log "Copying PMD binaries ..."
+
+  rm -rf "$BUILD_DIR/vendor/pmd"
+  mkdir -p "$BUILD_DIR/vendor/pmd"
+  cp -r pmd/* "$BUILD_DIR/vendor/pmd"
+
+  log "add pmd alias script"
+  echo -e '#!/bin/sh\n/app/vendor/pmd/bin/run.sh pmd $@' > $BUILD_DIR/vendor/pmd/bin/pmd
+  chmod +x $BUILD_DIR/vendor/pmd/bin/pmd
+
+  chmod -R 755 "$BUILD_DIR/vendor/pmd/bin"
+}
+
+setup_dirs() {
+  export PATH="$BUILD_DIR/vendor/pmd/bin:$PATH"
+}
+
+header 'Welcome to pmd-buildpack!'
+log "Exporting environment directories ..."
+export_env "$ENV_DIR"
+
+log "Starting PMD installation ..."
+install_pmd
+
+setup_dirs
+
+# Create .profile.d folder
+mkdir -p $BUILD_DIR/.profile.d
+
+# if no .profile.d/pmd.sh, create one
+if [ ! -f $BUILD_DIR/.profile.d/pmd.sh ]; then
+  log "Creating pmd.sh ..."
+  echo "echo \"Adding pmd to PATH...\"
+export PATH=\$PATH:/app/vendor/pmd/bin/" > $BUILD_DIR/.profile.d/pmd.sh
+
+  log "Generated $BUILD_DIR/.profile.d/pmd.sh to add pmd path"
+fi
+
+header "DONE! Completed in $(($SECONDS - $START_TIME))s"
+exit 0
